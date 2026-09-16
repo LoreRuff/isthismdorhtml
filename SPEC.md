@@ -29,7 +29,8 @@
 
 Settings resolve env var → `viewer.conf` `[viewer]` section → built-in default
 (see `_impostazione()`). Keys: `MD_ROOT`/`root`, `MD_TITLE`/`title`,
-`PORT`/`port`.
+`PORT`/`port`, `VIEWER_HOST`/`host` (env is `VIEWER_HOST`, not `HOST`: `HOST`
+is a standard shell variable holding the hostname and would override the bind).
 
 | Route | Behaviour |
 |-------|-----------|

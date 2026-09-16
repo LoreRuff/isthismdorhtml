@@ -7,11 +7,19 @@
 #   MD_ROOT  — radice dei file .md/.html (relativa al cwd o assoluta; default 'toview')
 #   MD_TITLE — titolo del sito (default 'Document Viewer')
 #   PORT     — porta HTTP (default 5000)
+#   VIEWER_HOST — interfaccia di bind (default '0.0.0.0', tutta la rete: il vault
+#              è leggibile da chi è sulla stessa rete; '127.0.0.1' per solo locale)
+#
+# La variabile d'env è VIEWER_HOST, NON HOST: HOST è standard sulle shell unix
+# (contiene l'hostname, es. "localhost.localdomain") e schiaccerrebbe il bind.
 
 import configparser
+import html
 import os
 import re
 import urllib.parse
+
+import nh3
 
 from flask import Flask, abort
 import markdown
@@ -42,6 +50,7 @@ def _impostazione(env, chiave, default):
 MD_ROOT = _impostazione('MD_ROOT', 'root', 'toview')
 MD_TITLE = _impostazione('MD_TITLE', 'title', 'Document Viewer')
 PORT = int(_impostazione('PORT', 'port', '5000'))
+HOST = _impostazione('VIEWER_HOST', 'host', '0.0.0.0')
 
 # Radice normalizzata una volta: realpath qui + realpath lato richiesta è la barriera
 # anti-path-traversal (un '../' o un symlink fuori radice non passa mai).
@@ -113,6 +122,9 @@ def html_pagina(titolo, contenuto, mtime=None):
     # data-mtime: il JS di auto-refresh confronta questo valore con quello del fetch
     # successivo; ricarica solo se il file è davvero cambiato (niente falsi reload).
     tag_body = f'<body data-mtime="{m}">' if (m := mtime) else '<body>'
+    # titolo: interpolato in <title> e sempre escapato qui, in UN solo punto:
+    # i chiamanti passano testo nudo (titolo di config, basename di file).
+    titolo = html.escape(str(titolo))
     return f"""<!DOCTYPE html>
 <html>
 <head>
@@ -179,18 +191,21 @@ def homepage():
     except NotADirectoryError:
         # os.walk su percorso inesistente tace e torna lista vuota ("nessun file"):
         # errore fuorviante. Qui fallisce rumoroso, col percorso colpevole.
-        return html_pagina("Error", f"<h1>Error</h1><p>The folder '{MD_ROOT}' does not exist.</p>")
+        return html_pagina("Error", f"<h1>Error</h1><p>The folder '{html.escape(MD_ROOT)}' does not exist.</p>")
     # os.walk salta le directory nascoste (.obsidian, .debris, __pycache__…) prima
     # di elencarle: il viewer mostra solo contenuti reali.
-    contenuto = f"<h1>{MD_TITLE}</h1>"
+    # escape su rel_dir e nome_file: arrivano dal filesystem (nomi file/pagine
+    # syncati, non scritti da noi) e senza escape un '<img onerror=…>.md'
+    # inietterebbe HTML in ogni homepage.
+    contenuto = f"<h1>{html.escape(MD_TITLE)}</h1>"
     for rel_dir, files in sezioni:
         if rel_dir != '.':
-            contenuto += f"<h2 class='percorso'>{rel_dir}/</h2>"
+            contenuto += f"<h2 class='percorso'>{html.escape(rel_dir)}/</h2>"
         lista = "<ul class='lista'>"
         for nome_file in files:
             rel = nome_file if rel_dir == '.' else os.path.join(rel_dir, nome_file)
             url = '/visualizza/' + urllib.parse.quote(rel)
-            lista += f"<li><a href='{url}'>{nome_file}</a></li>"
+            lista += f"<li><a href='{url}'>{html.escape(nome_file)}</a></li>"
         contenuto += lista + "</ul>"
     if len(sezioni) == 0:
         contenuto += "<p>No .md or .html files found.</p>"
@@ -232,13 +247,23 @@ def visualizza(percorso_rel):
         return risposta
     with open(percorso, "r", encoding="utf-8") as f:
         aggiorna_indice_wikilink()
-        contenuto_html = markdown.markdown(f.read(), extensions=EXTENSIONI)
+        # nh3 pulisce l'HTML prodotto dal markdown: il sorgente .md arriva dal
+        # filesystem (cartelle syncate) e attr_list/raw HTML permettono attributi
+        # arbitrari (onclick, script). Allowlist = default di nh3 + class/id su
+        # ogni tag: toc e codehilite li usano (id="…", class="codehilite") e senza
+        # class il highlighting non si colora più. Occhio: passare `attributes`
+        # SOSTITUISCE i default (perderemmo href) — per questo si parte da
+        # ALLOWED_ATTRIBUTES e si estende, non il contrario.
+        attributi = dict(nh3.ALLOWED_ATTRIBUTES)
+        attributi.setdefault('*', set()).update({'class', 'id'})
+        contenuto_html = nh3.clean(markdown.markdown(f.read(), extensions=EXTENSIONI),
+                                   attributes=attributi)
     rel = os.path.relpath(percorso, radice)
     mtime = os.path.getmtime(percorso)
-    filaccio = f"<a class='home-link' href='/'>← Back to {MD_TITLE}</a>"
+    filaccio = f"<a class='home-link' href='/'>← Back to {html.escape(MD_TITLE)}</a>"
     return html_pagina(
         os.path.basename(percorso),
-        f"<p class='percorso'>{rel}</p>" + contenuto_html + filaccio,
+        f"<p class='percorso'>{html.escape(rel)}</p>" + contenuto_html + filaccio,
         mtime=str(mtime),
     )
 
@@ -250,5 +275,5 @@ def pagina_non_trovata(e):
 
 
 if __name__ == "__main__":
-    print(f" * Espositore documenti (.md/.html): {MD_ROOT} → http://0.0.0.0:{PORT}")
-    app.run(host='0.0.0.0', port=PORT)
+    print(f" * Espositore documenti (.md/.html): {MD_ROOT} → http://{HOST}:{PORT}")
+    app.run(host=HOST, port=PORT)

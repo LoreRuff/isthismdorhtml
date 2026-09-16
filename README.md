@@ -24,7 +24,9 @@ finished document and is rendered faithfully as-is.
   (reloads a Markdown page only when the file's mtime actually changed)
 - **Path-traversal hard** — `realpath` on both root and request: any `../` or
   symlink escaping the root is a plain 404, never a read outside `MD_ROOT`
-- **No build step** — a single Python file, three dependencies
+- **Sanitized output** — filesystem-derived names are HTML-escaped and the
+  rendered Markdown is sanitized (nh3) before it reaches the browser
+- **No build step** — a single Python file, four dependencies
 
 ## Run
 
@@ -40,6 +42,10 @@ Open `http://localhost:5000`.
 | `MD_ROOT` | `toview`           | document root (relative or absolute)     |
 | `MD_TITLE`| `Document Viewer`  | site title                               |
 | `PORT`    | `5000`             | HTTP port                                |
+| `VIEWER_HOST` | `0.0.0.0`       | bind interface (`127.0.0.1` = only this machine) |
+
+Note: the env variable is `VIEWER_HOST`, not `HOST` — `HOST` is a standard
+shell variable (the hostname) and would silently override the bind.
 
 ### Configuration file
 
@@ -51,6 +57,7 @@ overridable with `VIEWER_CONFIG`) so a permanent installation needs no flags:
 title = My Recipe Book
 root = toview
 port = 5000
+host = 0.0.0.0
 ```
 
 Precedence: environment variables override the config file, which overrides
@@ -66,8 +73,9 @@ PORT=8080 MD_ROOT=toview .venv/bin/python server.py   # → http://localhost:808
 
 ### Accessing from other devices (firewall)
 
-The server binds to `0.0.0.0`, but most firewalls block inbound connections
-by default. Open the chosen port once, e.g. for port 5000:
+By default the server binds to `0.0.0.0` (all interfaces); restrict it to the
+local machine with `VIEWER_HOST=127.0.0.1`. Most firewalls block inbound connections
+by default — open the chosen port once, e.g. for port 5000:
 
 ```bash
 # firewalld (openSUSE, RHEL, Fedora)
@@ -101,6 +109,15 @@ the viewer serves every document under `MD_ROOT` unauthenticated.
 - Read-only by design: the viewer never writes anything under `MD_ROOT`.
 - `realpath` containment on every request; requests resolving outside the root
   return 404.
+- Every filename/path/title interpolated in the homepage and document pages is
+  HTML-escaped (files come from the filesystem, possibly synced folders).
+- Rendered Markdown is sanitized with `nh3` (allowlist-based): raw HTML and
+  `attr_list` attributes survive conversion but scripts/event handlers are
+  stripped before the browser sees them.
+- `.html`/`.htm` files are still served byte-for-byte, untouched: a raw HTML
+  document is by definition a finished document, and sanitizing it would change
+  its content. Serving your own untrusted files as raw HTML is an accepted
+  risk, same nature as opening them in a browser.
 - The wikilink index is rebuilt per Markdown conversion (one `os.walk`), so a
   live tree works with no cache to invalidate.
 
